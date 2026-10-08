@@ -59,7 +59,7 @@ class _HomePageState extends State<HomePage> {
 
   List<String> distractors(String t, int count) {
     final pool = chars.where((c) => c != t).toList()..shuffle(random);
-    final related = <String>{
+    final related = <String, List<String>>{
       '人': '入大个天夫从众'.split(''),
       '入': '人八大'.split(''),
       '口': '日目田回中'.split(''),
