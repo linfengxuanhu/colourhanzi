@@ -1,0 +1,16 @@
+name: hanzi_color_app
+description: 一年级汉字找字涂色打印练习器
+publish_to: 'none'
+version: 2.0.0+2
+
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  path_provider: ^2.1.5
+  share_plus: ^12.0.1
+
+flutter:
+  uses-material-design: true
