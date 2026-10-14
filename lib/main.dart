@@ -14,6 +14,8 @@ void main() {
   runApp(const HanziColorApp());
 }
 
+const String kaiTiFont = 'KaiTi';
+
 class HanziColorApp extends StatelessWidget {
   const HanziColorApp({super.key});
 
@@ -25,6 +27,7 @@ class HanziColorApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.indigo,
+        fontFamily: kaiTiFont,
       ),
       home: const HomePage(),
     );
@@ -87,7 +90,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   // 形近字、易混字候选库。
-  // 程序会根据当前字库过滤，避免出现不在所选教材范围内的干扰字。
   static const Map<String, List<String>> confusables = {
     '一': ['二', '三', '十', '土', '工', '干', '上', '下'],
     '二': ['一', '三', '十', '土', '工', '干', '云', '元', '王', '上', '下'],
@@ -140,13 +142,13 @@ class _HomePageState extends State<HomePage> {
   };
 
   // 先安排形近字，再用其他汉字补足。
+  // 如果当前筛选范围内的字不够，会尝试从完整字库补充。
   List<String> makeDistractors(String targetChar, int count) {
-    final pool = chars
-        .where((c) => c != targetChar)
-        .toList()
-      ..shuffle(random);
+    if (count <= 0) return <String>[];
 
-    final related = confusables[targetChar] ?? const <String>[];
+    final selectedChars = chars;
+    final allChars = all.map((e) => e.char).toSet().toList();
+
     final result = <String>[];
 
     final int relatedLimit;
@@ -161,20 +163,37 @@ class _HomePageState extends State<HomePage> {
         relatedLimit = (count * 0.3).round();
     }
 
+    final related = confusables[targetChar] ?? const <String>[];
+
     for (final c in related) {
       if (result.length >= relatedLimit) break;
 
-      if (chars.contains(c) &&
+      if (selectedChars.contains(c) &&
           c != targetChar &&
           !result.contains(c)) {
         result.add(c);
       }
     }
 
+    final pool = selectedChars
+        .where((c) => c != targetChar && !result.contains(c))
+        .toList()
+      ..shuffle(random);
+
     for (final c in pool) {
       if (result.length >= count) break;
+      result.add(c);
+    }
 
-      if (!result.contains(c)) {
+    // 仅当当前教材筛选结果不足时，才从完整字库补足。
+    if (result.length < count) {
+      final fallbackPool = allChars
+          .where((c) => c != targetChar && !result.contains(c))
+          .toList()
+        ..shuffle(random);
+
+      for (final c in fallbackPool) {
+        if (result.length >= count) break;
         result.add(c);
       }
     }
@@ -192,8 +211,6 @@ class _HomePageState extends State<HomePage> {
     try {
       syncTarget();
 
-      // 圆圈总数固定为22个。
-      // 目标字在圆圈内重复出现，同时页面中央单独展示一个无圆圈的大字。
       const int circleCount = 22;
       final int targetCount = repeat.clamp(3, 8);
 
@@ -217,6 +234,7 @@ class _HomePageState extends State<HomePage> {
 
       setState(() {
         image = bytes;
+        pageNo++;
       });
     } catch (e) {
       if (!mounted) return;
@@ -250,7 +268,7 @@ class _HomePageState extends State<HomePage> {
       Paint()..color = Colors.white,
     );
 
-    // 绘制文字。
+    // 绘制文字：明确指定注册的楷体字体。
     void drawText(
       String value,
       Offset position,
@@ -261,6 +279,7 @@ class _HomePageState extends State<HomePage> {
     }) {
       final builder = ui.ParagraphBuilder(
         ui.ParagraphStyle(
+          fontFamily: kaiTiFont,
           fontSize: fontSize,
           fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
           textAlign: align,
@@ -272,7 +291,7 @@ class _HomePageState extends State<HomePage> {
             color: Colors.black,
             fontSize: fontSize,
             fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-            fontFamily: 'sans-serif',
+            fontFamily: kaiTiFont,
           ),
         )
         ..addText(value);
@@ -305,20 +324,20 @@ class _HomePageState extends State<HomePage> {
     );
 
     // 中央目标字：不画圆圈。
-    // 位置略偏页面中心上方，给周围圆圈留出视觉空间。
     const center = Offset(w / 2, 875);
 
     final targetBuilder = ui.ParagraphBuilder(
-      const ui.ParagraphStyle(
+      ui.ParagraphStyle(
+        fontFamily: kaiTiFont,
         fontSize: 190,
         textAlign: TextAlign.center,
       ),
     )
       ..pushStyle(
-        const ui.TextStyle(
+        ui.TextStyle(
           fontSize: 190,
           color: Colors.black,
-          fontFamily: 'sans-serif',
+          fontFamily: kaiTiFont,
         ),
       )
       ..addText(targetChar);
@@ -331,8 +350,7 @@ class _HomePageState extends State<HomePage> {
       Offset(center.dx - 150, center.dy - 100),
     );
 
-    // 22个圆圈错落排列，环绕中央目标字。
-    // 采用固定的安全位置，再随机分配汉字，避免圆圈彼此重叠。
+    // 22个圆圈错落排列。
     final List<Offset> positions = [
       const Offset(300, 440),
       const Offset(620, 440),
@@ -363,8 +381,6 @@ class _HomePageState extends State<HomePage> {
       const Offset(1000, 1330),
     ];
 
-    // 轻微随机化位置，使每次练习不完全相同。
-    // 只在安全范围内移动，防止圆圈挤到页面边缘。
     final shuffledPositions = List<Offset>.from(positions)
       ..shuffle(random);
 
@@ -373,12 +389,16 @@ class _HomePageState extends State<HomePage> {
       ..strokeWidth = 4
       ..color = Colors.black;
 
-    final double radius = 53;
+    const double radius = 53;
 
-    for (int i = 0;
-        i < min(circleChars.length, shuffledPositions.length);
-        i++) {
+    final int actualCount = min(
+      circleChars.length,
+      shuffledPositions.length,
+    );
+
+    for (int i = 0; i < actualCount; i++) {
       final p = shuffledPositions[i];
+
       final dx = (random.nextDouble() - 0.5) * 12;
       final dy = (random.nextDouble() - 0.5) * 12;
       final point = Offset(p.dx + dx, p.dy + dy);
@@ -386,16 +406,17 @@ class _HomePageState extends State<HomePage> {
       canvas.drawCircle(point, radius, circlePaint);
 
       final charBuilder = ui.ParagraphBuilder(
-        const ui.ParagraphStyle(
+        ui.ParagraphStyle(
+          fontFamily: kaiTiFont,
           fontSize: 52,
           textAlign: TextAlign.center,
         ),
       )
         ..pushStyle(
-          const ui.TextStyle(
+          ui.TextStyle(
             fontSize: 52,
             color: Colors.black,
-            fontFamily: 'sans-serif',
+            fontFamily: kaiTiFont,
           ),
         )
         ..addText(circleChars[i]);
@@ -448,7 +469,7 @@ class _HomePageState extends State<HomePage> {
       final dir = await getTemporaryDirectory();
 
       final file = File(
-        '${dir.path}/汉字找字_${pageNo.toString().padLeft(3, '0')}.png',
+        '${dir.path}/汉字找字_${(pageNo - 1).toString().padLeft(3, '0')}.png',
       );
 
       await file.writeAsBytes(image!, flush: true);
@@ -501,7 +522,7 @@ class _HomePageState extends State<HomePage> {
               child: Column(
                 children: [
                   DropdownButtonFormField<String>(
-                    value: semester,
+                    initialValue: semester,
                     decoration: const InputDecoration(
                       labelText: '教材范围',
                     ),
@@ -524,7 +545,7 @@ class _HomePageState extends State<HomePage> {
                     },
                   ),
                   DropdownButtonFormField<String>(
-                    value: type,
+                    initialValue: type,
                     decoration: const InputDecoration(
                       labelText: '字表类型',
                     ),
@@ -547,7 +568,7 @@ class _HomePageState extends State<HomePage> {
                     },
                   ),
                   DropdownButtonFormField<String>(
-                    value: availableChars.contains(target)
+                    initialValue: availableChars.contains(target)
                         ? target
                         : (availableChars.isNotEmpty
                             ? availableChars.first
@@ -576,7 +597,7 @@ class _HomePageState extends State<HomePage> {
                     },
                   ),
                   DropdownButtonFormField<String>(
-                    value: difficulty,
+                    initialValue: difficulty,
                     decoration: const InputDecoration(
                       labelText: '练习难度',
                     ),
