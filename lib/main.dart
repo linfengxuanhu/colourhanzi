@@ -14,20 +14,19 @@ void main() {
   runApp(const HanziColorApp());
 }
 
-const String kaiTiFont = 'KaiTi';
-
 class HanziColorApp extends StatelessWidget {
   const HanziColorApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+    const seed = Color(0xFF535D96);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: '汉字找字涂色',
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.indigo,
-        fontFamily: kaiTiFont,
+        colorScheme: ColorScheme.fromSeed(seedColor: seed),
+        scaffoldBackgroundColor: const Color(0xFFF8F7FC),
       ),
       home: const HomePage(),
     );
@@ -55,7 +54,6 @@ class _HomePageState extends State<HomePage> {
   int pageNo = 1;
   bool generating = false;
 
-  // 根据教材范围和字表类型筛选汉字。
   List<String> get chars {
     Iterable<HanziItem> items = all;
 
@@ -78,9 +76,7 @@ class _HomePageState extends State<HomePage> {
       target = chars.first;
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      generate();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => generate());
   }
 
   void syncTarget() {
@@ -127,7 +123,7 @@ class _HomePageState extends State<HomePage> {
     '间': ['问', '门', '闪', '阳'],
     '晴': ['睛', '清', '情', '请'],
     '睛': ['晴', '情', '清', '请'],
-    '清': ['晴', '情', '请', '青'],
+    '清': ['晴', '睛', '情', '请', '青'],
     '情': ['晴', '清', '请', '青'],
     '请': ['晴', '清', '情', '青'],
     '青': ['清', '晴', '情', '请'],
@@ -141,41 +137,31 @@ class _HomePageState extends State<HomePage> {
     '后': ['前', '石'],
   };
 
-  // 先安排形近字，再用其他汉字补足。
-  // 如果当前筛选范围内的字不够，会尝试从完整字库补充。
+  // 按难度挑选干扰字。
   List<String> makeDistractors(String targetChar, int count) {
     if (count <= 0) return <String>[];
 
-    final selectedChars = chars;
-    final allChars = all.map((e) => e.char).toSet().toList();
-
+    final selected = chars;
+    final complete = all.map((e) => e.char).toSet().toList();
     final result = <String>[];
 
-    final int relatedLimit;
-    switch (difficulty) {
-      case '简单':
-        relatedLimit = 0;
-        break;
-      case '困难':
-        relatedLimit = (count * 0.5).round();
-        break;
-      default:
-        relatedLimit = (count * 0.3).round();
-    }
+    final int relatedLimit = switch (difficulty) {
+      '简单' => 0,
+      '困难' => (count * 0.5).round(),
+      _ => (count * 0.3).round(),
+    };
 
-    final related = confusables[targetChar] ?? const <String>[];
-
-    for (final c in related) {
+    for (final c in confusables[targetChar] ?? const <String>[]) {
       if (result.length >= relatedLimit) break;
 
-      if (selectedChars.contains(c) &&
+      if (selected.contains(c) &&
           c != targetChar &&
           !result.contains(c)) {
         result.add(c);
       }
     }
 
-    final pool = selectedChars
+    final pool = selected
         .where((c) => c != targetChar && !result.contains(c))
         .toList()
       ..shuffle(random);
@@ -185,14 +171,13 @@ class _HomePageState extends State<HomePage> {
       result.add(c);
     }
 
-    // 仅当当前教材筛选结果不足时，才从完整字库补足。
     if (result.length < count) {
-      final fallbackPool = allChars
+      final fallback = complete
           .where((c) => c != targetChar && !result.contains(c))
           .toList()
         ..shuffle(random);
 
-      for (final c in fallbackPool) {
+      for (final c in fallback) {
         if (result.length >= count) break;
         result.add(c);
       }
@@ -204,31 +189,22 @@ class _HomePageState extends State<HomePage> {
   Future<void> generate() async {
     if (generating || chars.isEmpty) return;
 
-    setState(() {
-      generating = true;
-    });
+    setState(() => generating = true);
 
     try {
       syncTarget();
 
-      const int circleCount = 22;
+      const int circleCount = 24;
       final int targetCount = repeat.clamp(3, 8);
 
-      final distractors =
-          makeDistractors(target, circleCount - targetCount);
-
-      final List<String> circleChars = [
+      final circleChars = <String>[
         ...List.filled(targetCount, target),
-        ...distractors,
+        ...makeDistractors(target, circleCount - targetCount),
       ];
 
       circleChars.shuffle(random);
 
-      final bytes = await renderPage(
-        target,
-        circleChars,
-        pageNo,
-      );
+      final bytes = await renderPage(target, circleChars, pageNo);
 
       if (!mounted) return;
 
@@ -244,9 +220,7 @@ class _HomePageState extends State<HomePage> {
       );
     } finally {
       if (mounted) {
-        setState(() {
-          generating = false;
-        });
+        setState(() => generating = false);
       }
     }
   }
@@ -256,7 +230,7 @@ class _HomePageState extends State<HomePage> {
     List<String> circleChars,
     int page,
   ) async {
-    // A4纵向比例，1240×1754像素。
+    // A4纵向比例，约1240×1754像素。
     const double w = 1240;
     const double h = 1754;
 
@@ -268,22 +242,22 @@ class _HomePageState extends State<HomePage> {
       Paint()..color = Colors.white,
     );
 
-    // 绘制文字：明确指定注册的楷体字体。
+    // 使用系统中文字体回退。
+    // 如果需要严格的楷体效果，还需将真实字体文件加入项目。
     void drawText(
       String value,
-      Offset position,
+      double centerX,
+      double top,
       double fontSize, {
       bool bold = false,
-      double width = 1000,
-      TextAlign align = TextAlign.center,
+      double maxWidth = 1000,
     }) {
       final builder = ui.ParagraphBuilder(
         ui.ParagraphStyle(
-          fontFamily: kaiTiFont,
           fontSize: fontSize,
           fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-          textAlign: align,
-          maxLines: 2,
+          textAlign: TextAlign.center,
+          maxLines: 1,
         ),
       )
         ..pushStyle(
@@ -291,410 +265,22 @@ class _HomePageState extends State<HomePage> {
             color: Colors.black,
             fontSize: fontSize,
             fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-            fontFamily: kaiTiFont,
           ),
         )
         ..addText(value);
 
       final paragraph = builder.build()
-        ..layout(ui.ParagraphConstraints(width: width));
+        ..layout(ui.ParagraphConstraints(width: maxWidth));
 
-      canvas.drawParagraph(paragraph, position);
+      canvas.drawParagraph(
+        paragraph,
+        Offset(centerX - maxWidth / 2, top),
+      );
     }
 
     // 标题区域。
     drawText(
       '幼儿识字启蒙',
-      const Offset(120, 65),
-      46,
-      bold: true,
-    );
-
-    drawText(
-      '找出“$targetChar”并涂色',
-      const Offset(120, 125),
-      32,
-    );
-
-    drawText(
-      '第 $page 页',
-      const Offset(970, 78),
-      23,
-      align: TextAlign.right,
-    );
-
-    // 中央目标字：不画圆圈。
-    const center = Offset(w / 2, 875);
-
-    final targetBuilder = ui.ParagraphBuilder(
-      ui.ParagraphStyle(
-        fontFamily: kaiTiFont,
-        fontSize: 190,
-        textAlign: TextAlign.center,
-      ),
-    )
-      ..pushStyle(
-        ui.TextStyle(
-          fontSize: 190,
-          color: Colors.black,
-          fontFamily: kaiTiFont,
-        ),
-      )
-      ..addText(targetChar);
-
-    final targetParagraph = targetBuilder.build()
-      ..layout(const ui.ParagraphConstraints(width: 300));
-
-    canvas.drawParagraph(
-      targetParagraph,
-      Offset(center.dx - 150, center.dy - 100),
-    );
-
-    // 22个圆圈错落排列。
-    final List<Offset> positions = [
-      const Offset(300, 440),
-      const Offset(620, 440),
-      const Offset(940, 440),
-
-      const Offset(170, 580),
-      const Offset(420, 580),
-      const Offset(820, 580),
-      const Offset(1070, 580),
-
-      const Offset(130, 720),
-      const Offset(350, 720),
-      const Offset(890, 720),
-      const Offset(1110, 720),
-
-      const Offset(170, 1040),
-      const Offset(420, 1040),
-      const Offset(820, 1040),
-      const Offset(1070, 1040),
-
-      const Offset(300, 1180),
-      const Offset(560, 1180),
-      const Offset(820, 1180),
-      const Offset(1040, 1180),
-
-      const Offset(240, 1330),
-      const Offset(620, 1330),
-      const Offset(1000, 1330),
-    ];
-
-    final shuffledPositions = List<Offset>.from(positions)
-      ..shuffle(random);
-
-    final circlePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4
-      ..color = Colors.black;
-
-    const double radius = 53;
-
-    final int actualCount = min(
-      circleChars.length,
-      shuffledPositions.length,
-    );
-
-    for (int i = 0; i < actualCount; i++) {
-      final p = shuffledPositions[i];
-
-      final dx = (random.nextDouble() - 0.5) * 12;
-      final dy = (random.nextDouble() - 0.5) * 12;
-      final point = Offset(p.dx + dx, p.dy + dy);
-
-      canvas.drawCircle(point, radius, circlePaint);
-
-      final charBuilder = ui.ParagraphBuilder(
-        ui.ParagraphStyle(
-          fontFamily: kaiTiFont,
-          fontSize: 52,
-          textAlign: TextAlign.center,
-        ),
-      )
-        ..pushStyle(
-          ui.TextStyle(
-            fontSize: 52,
-            color: Colors.black,
-            fontFamily: kaiTiFont,
-          ),
-        )
-        ..addText(circleChars[i]);
-
-      final charParagraph = charBuilder.build()
-        ..layout(
-          const ui.ParagraphConstraints(width: 106),
-        );
-
-      canvas.drawParagraph(
-        charParagraph,
-        Offset(point.dx - 53, point.dy - 31),
-      );
-    }
-
-    // 页脚提示。
-    drawText(
-      '提示：认真观察每一个字，找到相同的字后涂色。',
-      const Offset(120, 1650),
-      25,
-      width: 1000,
-      align: TextAlign.left,
-    );
-
-    final picture = recorder.endRecording();
-
-    final img = await picture.toImage(
-      w.toInt(),
-      h.toInt(),
-    );
-
-    final data = await img.toByteData(
-      format: ui.ImageByteFormat.png,
-    );
-
-    img.dispose();
-    picture.dispose();
-
-    if (data == null) {
-      throw Exception('图片数据生成失败');
-    }
-
-    return data.buffer.asUint8List();
-  }
-
-  Future<void> shareImage() async {
-    if (image == null) return;
-
-    try {
-      final dir = await getTemporaryDirectory();
-
-      final file = File(
-        '${dir.path}/汉字找字_${(pageNo - 1).toString().padLeft(3, '0')}.png',
-      );
-
-      await file.writeAsBytes(image!, flush: true);
-
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [XFile(file.path)],
-          text: '汉字找字涂色练习',
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('分享失败：$e')),
-      );
-    }
-  }
-
-  void changeSemester(String value) {
-    setState(() {
-      semester = value;
-      syncTarget();
-      image = null;
-    });
-  }
-
-  void changeType(String value) {
-    setState(() {
-      type = value;
-      syncTarget();
-      image = null;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final availableChars = chars;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('汉字找字 · 最终优化版'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: semester,
-                    decoration: const InputDecoration(
-                      labelText: '教材范围',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: '全年',
-                        child: Text('一年级全年（上册+下册）'),
-                      ),
-                      DropdownMenuItem(
-                        value: '上册',
-                        child: Text('一年级上册（2024统编新版）'),
-                      ),
-                      DropdownMenuItem(
-                        value: '下册',
-                        child: Text('一年级下册（2024统编新版）'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) changeSemester(value);
-                    },
-                  ),
-                  DropdownButtonFormField<String>(
-                    initialValue: type,
-                    decoration: const InputDecoration(
-                      labelText: '字表类型',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: '会认',
-                        child: Text('会认字'),
-                      ),
-                      DropdownMenuItem(
-                        value: '会写',
-                        child: Text('会写字'),
-                      ),
-                      DropdownMenuItem(
-                        value: '全部',
-                        child: Text('全部一年级字'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) changeType(value);
-                    },
-                  ),
-                  DropdownButtonFormField<String>(
-                    initialValue: availableChars.contains(target)
-                        ? target
-                        : (availableChars.isNotEmpty
-                            ? availableChars.first
-                            : null),
-                    decoration: const InputDecoration(
-                      labelText: '目标汉字',
-                    ),
-                    items: availableChars
-                        .map(
-                          (c) => DropdownMenuItem<String>(
-                            value: c,
-                            child: Text(
-                              c,
-                              style: const TextStyle(fontSize: 24),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-
-                      setState(() {
-                        target = value;
-                        image = null;
-                      });
-                    },
-                  ),
-                  DropdownButtonFormField<String>(
-                    initialValue: difficulty,
-                    decoration: const InputDecoration(
-                      labelText: '练习难度',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: '简单',
-                        child: Text('简单：普通干扰字为主'),
-                      ),
-                      DropdownMenuItem(
-                        value: '普通',
-                        child: Text('普通：加入部分形近字'),
-                      ),
-                      DropdownMenuItem(
-                        value: '困难',
-                        child: Text('困难：提高易混字比例'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-
-                      setState(() {
-                        difficulty = value;
-                        image = null;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Text('目标字出现次数'),
-                      Expanded(
-                        child: Slider(
-                          value: repeat.toDouble(),
-                          min: 3,
-                          max: 8,
-                          divisions: 5,
-                          label: '$repeat',
-                          onChanged: (value) {
-                            setState(() {
-                              repeat = value.round();
-                              image = null;
-                            });
-                          },
-                        ),
-                      ),
-                      Text('$repeat 次'),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: generating ? null : generate,
-                  icon: generating
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Icon(Icons.refresh),
-                  label: Text(generating ? '生成中…' : '生成练习页'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: image == null ? null : shareImage,
-                  icon: const Icon(Icons.share),
-                  label: const Text('分享/打印'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          if (image != null)
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Image.memory(
-                image!,
-                fit: BoxFit.contain,
-              ),
-            ),
-          const SizedBox(height: 12),
-          const Text(
-            '版式特点：中央目标字无圆圈；周围汉字各自带圈；'
-            '根据难度选择干扰字；黑白打印；A4纵向比例。',
-            style: TextStyle(color: Colors.black54),
-          ),
-        ],
-      ),
-    );
-  }
-}
+      w / 2,
+      70,
+    
